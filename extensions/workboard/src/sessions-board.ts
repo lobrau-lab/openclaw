@@ -1,9 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   WorkboardSessionFacts,
-  WorkboardSessionPlacement,
   WorkboardSessionsBoard,
   WorkboardSessionsBoardRead,
+  WorkboardSessionsBoardView,
 } from "@openclaw/workboard-contract";
 import { resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-scope-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
@@ -11,6 +11,7 @@ import { resolveGlobalSingleton } from "openclaw/plugin-sdk/global-singleton";
 import { redactToolPayloadText } from "openclaw/plugin-sdk/logging-core";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { OpenClawPluginApi, OpenClawPluginService } from "../api.js";
+import type { WorkboardSessionPlacementWrite } from "./persistence-types.js";
 import {
   parseSessionPlacements,
   sessionFactsHash,
@@ -56,7 +57,7 @@ type BoardState = {
 };
 type CallerAuthority = { assertCurrent: () => void };
 type Operations = {
-  read: (boardId: string) => Promise<WorkboardSessionsBoardRead>;
+  read: (boardId: string, view?: WorkboardSessionsBoardView) => Promise<WorkboardSessionsBoardRead>;
   update: (
     boardId: string,
     patch: unknown,
@@ -88,11 +89,21 @@ function activeState() {
 }
 
 /** Uses the existing Gateway session-list owner in the invoking caller's scope. */
-async function listSessions(gateway: Gateway, board: WorkboardSessionsBoard) {
+async function listSessions(
+  gateway: Gateway,
+  board: WorkboardSessionsBoard,
+  view?: WorkboardSessionsBoardView,
+) {
   const sessions = new Map<string, string>();
+  let people: WorkboardSessionsBoardRead["people"];
   let offset = 0;
   for (;;) {
-    const payload = await gateway.request(
+    const payload = await gateway.request<{
+      sessions: unknown[];
+      hasMore?: boolean;
+      nextOffset?: number;
+      people?: WorkboardSessionsBoardRead["people"];
+    }>(
       "sessions.list",
       {
         limit: 1000,
@@ -106,11 +117,15 @@ async function listSessions(gateway: Gateway, board: WorkboardSessionsBoard) {
         ...(board.sessions.scope?.agentIds?.length === 1
           ? { agentId: board.sessions.scope.agentIds[0] }
           : {}),
+        ...view,
       },
       { scopes: ["operator.read"] },
     );
     if (!isRecord(payload) || !Array.isArray(payload.sessions)) {
       throw new Error("sessions.list returned an invalid Sessions board roster.");
+    }
+    if (offset === 0 && view?.includePeople) {
+      people = payload.people;
     }
     for (const session of payload.sessions) {
       if (
@@ -122,7 +137,7 @@ async function listSessions(gateway: Gateway, board: WorkboardSessionsBoard) {
       }
     }
     if (payload.hasMore !== true) {
-      return sessions;
+      return { sessions, people };
     }
     const next = payload.nextOffset;
     if (typeof next !== "number" || !Number.isSafeInteger(next) || next <= offset) {
@@ -197,7 +212,7 @@ function createOwner(
   const classify = async (id: string, state: BoardState) => {
     assertCurrent();
     const board = await params.store.getSessionsBoard(id);
-    const roster = await listSessions(params.gateway, board);
+    const { sessions: roster } = await listSessions(params.gateway, board);
     const facts: WorkboardSessionFacts[] = [];
     const keys = [...roster.keys()];
     for (let offset = 0; offset < keys.length; offset += SESSIONS_BOARD_BATCH_SIZE) {
@@ -238,7 +253,7 @@ function createOwner(
     );
     const columns = new Set(board.sessions.columns.map((column) => column.id));
     const fallback = sessionsBoardFallback(board);
-    const writes: Array<WorkboardSessionPlacement & { expectedUpdatedAt?: number }> = [];
+    const writes: WorkboardSessionPlacementWrite[] = [];
     const needsModel: WorkboardSessionFacts[] = [];
     for (const session of facts) {
       const old = cached.get(session.key);
@@ -341,19 +356,17 @@ function createOwner(
         batch,
       );
       assertCurrent();
-      const modelWrites = batch.map(
-        (session): WorkboardSessionPlacement & { expectedUpdatedAt?: number } => {
-          const result = output.get(session.key) ?? { columnId: fallback.id, reason: "unresolved" };
-          return {
-            sessionKey: session.key,
-            ...result,
-            source: "model",
-            factsHash: `${state.specHash}:${sessionFactsHash(session)}`,
-            updatedAt: now(),
-            expectedUpdatedAt: cached.get(session.key)?.updatedAt,
-          };
-        },
-      );
+      const modelWrites = batch.map((session): WorkboardSessionPlacementWrite => {
+        const result = output.get(session.key) ?? { columnId: fallback.id, reason: "unresolved" };
+        return {
+          sessionKey: session.key,
+          ...result,
+          source: "model",
+          factsHash: `${state.specHash}:${sessionFactsHash(session)}`,
+          updatedAt: now(),
+          expectedUpdatedAt: cached.get(session.key)?.updatedAt,
+        };
+      });
       if (
         !(await params.store.writeSessionPlacements(id, modelWrites, {
           expectedSpec: board.sessions,
@@ -432,7 +445,10 @@ function createOwner(
       state.pending = pending;
       return pending;
     });
-  const read = async (id: string): Promise<WorkboardSessionsBoardRead> => {
+  const read = async (
+    id: string,
+    view?: WorkboardSessionsBoardView,
+  ): Promise<WorkboardSessionsBoardRead> => {
     assertCurrent();
     const board = await params.store.getSessionsBoard(id);
     const state = stateFor(id);
@@ -441,7 +457,7 @@ function createOwner(
       void schedule(id);
     }
     // Foreground authorization stays in the requesting operator/tool scope, not the service scope.
-    const visible = await listSessions(params.gateway, board);
+    const { sessions: visible, people } = await listSessions(params.gateway, board, view);
     const placements = new Map(
       (await params.store.listSessionPlacements(id)).map((entry) => [entry.sessionKey, entry]),
     );
@@ -466,6 +482,7 @@ function createOwner(
       board,
       columns: board.sessions.columns,
       sessions,
+      ...(people !== undefined ? { people } : {}),
       ...(state.warning ? { warning: state.warning } : {}),
       ...(state.classifiedAt !== undefined ? { classifiedAt: state.classifiedAt } : {}),
     };
@@ -503,7 +520,7 @@ function createOwner(
       if (!board.sessions.columns.some((column) => column.id === columnId)) {
         throw new Error("Unknown Sessions board column.");
       }
-      const visible = await listSessions(params.gateway, board);
+      const { sessions: visible } = await listSessions(params.gateway, board);
       if (!visible.has(sessionKey)) {
         throw new Error("Session is not available in this board's scope.");
       }
@@ -614,7 +631,7 @@ export function createWorkboardSessionsBoardService(
       }
       await owner.stop();
     },
-    read: (id) => current().read(id),
+    read: (id, view) => current().read(id, view),
     update: (id, patch, caller) => current().update(id, patch, caller),
     move: (id, key, column, caller) => current().move(id, key, column, caller),
     refresh: (id, caller) => current().refresh(id, caller),

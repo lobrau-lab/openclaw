@@ -98,6 +98,14 @@ its agent, run state, observer headline when available, pull requests, and recen
 activity. The agent filter narrows the displayed sessions without changing the
 saved board scope.
 
+**People filter:** Choose **Everyone** (the default), **Involving me**, or a person
+beside the agent filter. Involving me shows sessions you own or previously prompted;
+a person selects their profile associations. The choice is remembered per viewer,
+device, Gateway, and board. It does not change the shared board, classification, or
+the Board agent. API clients can pass `view: { involvingMe?: boolean,
+involvingProfileId?: string, includePeople?: boolean }` to
+`workboard.sessionsBoard.read`; `includePeople` returns the people facet for the picker.
+
 Classification is shared across the Gateway and uses the configured utility
 model. Reads follow the current caller's session visibility; the board and its
 classification cache follow the Gateway's trusted-operator model.
@@ -601,10 +609,10 @@ SQLite opening, queries, and transactions run in a background database worker.
 Disabling or reloading the plugin drains admitted storage work before closing
 its connections.
 
-Installations that used Workboard in the `.28` release can run
-`openclaw doctor --fix` to migrate the shipped legacy plugin-state namespaces
-(`workboard.cards`, `workboard.boards`, `workboard.notify`, and, if present,
-`workboard.attachments`) into the relational database.
+Installations with retained pre-July 2026 Workboard plugin-state KV data must
+upgrade through OpenClaw `2026.9.7` and run `openclaw doctor --fix` before upgrading
+to the latest version. Current Doctor reports this requirement without changing
+the legacy rows; current relational SQLite stores remain supported.
 
 ## Troubleshooting
 
