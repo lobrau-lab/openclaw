@@ -955,7 +955,7 @@ jobs:
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: Iv23liOECG0slfuhz093
-          private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
+          private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY || 'empty' }}
           owner: openclaw
           repositories: openclaw
           permission-actions: read

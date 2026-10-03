@@ -161,16 +161,17 @@ jobs:
         id: app-token
         continue-on-error: true
         with:
-          app-id: "2729701"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          client-id: "2729701"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY || 'empty' }}
 
       - name: Create fallback Barnacle app token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # zizmor: ignore[github-app] v3
         id: app-token-fallback
         if: steps.app-token.outcome == 'failure'
+        continue-on-error: true
         with:
-          app-id: "2971289"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK }}
+          client-id: "2971289"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK || 'empty' }}
 
       - name: Publish campaign issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -180,7 +181,7 @@ jobs:
           RELEASE_VALIDATION_CAMPAIGN_ISSUE: ${{ inputs.campaign_issue }}
           RELEASE_VALIDATION_TAG: ${{ inputs.tag }}
         with:
-          github-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}
+          github-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token || github.token }}
           script: |
             const fs = require("node:fs");
             const { pathToFileURL } = require("node:url");

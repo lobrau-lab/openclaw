@@ -216,8 +216,8 @@ jobs:
         continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: "2729701"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          client-id: "2729701"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY || 'empty' }}
           owner: ${{ steps.detect.outputs.autoscrub-owner }}
           repositories: ${{ steps.detect.outputs.autoscrub-repository }}
           permission-contents: write
@@ -228,8 +228,8 @@ jobs:
         continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: "2971289"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK }}
+          client-id: "2971289"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK || 'empty' }}
           owner: ${{ steps.detect.outputs.autoscrub-owner }}
           repositories: ${{ steps.detect.outputs.autoscrub-repository }}
           permission-contents: write
@@ -238,7 +238,7 @@ jobs:
         if: github.event_name == 'pull_request_target' && github.event.action != 'closed' && matrix.pr == github.event.pull_request.number && steps.detect.outputs.autoscrub == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          OPENCLAW_DEPENDENCY_GUARD_AUTOSCRUB_TOKEN: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}
+          OPENCLAW_DEPENDENCY_GUARD_AUTOSCRUB_TOKEN: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token || github.token }}
           OPENCLAW_SECURITY_REVIEW_MODE: autoscrub
         run: node scripts/github/security-review.mjs
 

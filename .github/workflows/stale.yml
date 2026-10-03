@@ -48,8 +48,8 @@ jobs:
         id: app-token
         continue-on-error: true
         with:
-          app-id: "2729701"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          client-id: "2729701"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY || 'empty' }}
           permission-actions: read
           permission-issues: write
           permission-pull-requests: write
@@ -57,8 +57,8 @@ jobs:
         id: app-token-fallback
         continue-on-error: true
         with:
-          app-id: "2971289"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK }}
+          client-id: "2971289"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK || 'empty' }}
           permission-actions: read
           permission-issues: write
           permission-pull-requests: write
@@ -67,7 +67,7 @@ jobs:
         continue-on-error: true
         uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
         with:
-          repo-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}
+          repo-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token || github.token }}
           days-before-issue-stale: 14
           days-before-issue-close: 7
           days-before-pr-stale: 14
@@ -100,7 +100,7 @@ jobs:
         continue-on-error: true
         uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
         with:
-          repo-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}
+          repo-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token || github.token }}
           days-before-issue-stale: 30
           days-before-issue-close: 10
           days-before-pr-stale: -1
@@ -124,7 +124,7 @@ jobs:
         continue-on-error: true
         uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
         with:
-          repo-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}
+          repo-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token || github.token }}
           days-before-issue-stale: -1
           days-before-issue-close: -1
           days-before-pr-stale: 27
@@ -256,22 +256,22 @@ jobs:
         id: app-token
         continue-on-error: true
         with:
-          app-id: "2729701"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          client-id: "2729701"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY || 'empty' }}
           permission-issues: write
           permission-metadata: read
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         id: app-token-fallback
         continue-on-error: true
         with:
-          app-id: "2971289"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK }}
+          client-id: "2971289"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK || 'empty' }}
           permission-issues: write
           permission-metadata: read
       - name: Mark inactive bugs for ClawSweeper verification
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
-          github-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}
+          github-token: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token || github.token }}
           retries: 3
           script: |
             const dayMs = 24 * 60 * 60 * 1000;
@@ -440,8 +440,8 @@ jobs:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         id: app-token
         with:
-          app-id: "2971289"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK }}
+          client-id: "2971289"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK || 'empty' }}
           permission-issues: write
           permission-metadata: read
           permission-pull-requests: write
@@ -453,7 +453,7 @@ jobs:
           INCLUDE_PRS: ${{ inputs.include_prs }}
           MAX_CLOSURES: ${{ inputs.max_closures }}
         with:
-          github-token: ${{ steps.app-token.outputs.token }}
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
           script: |
             const dayMs = 24 * 60 * 60 * 1000;
             const dryRun = process.env.DRY_RUN !== "false";
@@ -792,14 +792,14 @@ jobs:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         id: app-token
         with:
-          app-id: "2729701"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          client-id: "2729701"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY || 'empty' }}
           permission-issues: write
           permission-metadata: read
       - name: Lock closed issues after 48h of no activity
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
-          github-token: ${{ steps.app-token.outputs.token }}
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
           script: |
             const lockAfterHours = 48;
             const lockAfterMs = lockAfterHours * 60 * 60 * 1000;

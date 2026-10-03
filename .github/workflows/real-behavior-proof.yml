@@ -40,17 +40,18 @@ jobs:
         id: app-token
         continue-on-error: true
         with:
-          app-id: "2729701"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          client-id: "2729701"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY || 'empty' }}
           permission-issues: read
           permission-members: read
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         id: app-token-fallback
         if: steps.app-token.outcome == 'failure'
         continue-on-error: true
+        continue-on-error: true
         with:
-          app-id: "2971289"
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK }}
+          client-id: "2971289"
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK || 'empty' }}
           permission-issues: read
           permission-members: read
       - name: Setup supported Node runtime
@@ -61,6 +62,6 @@ jobs:
 
       - name: Check PR context and evidence
         env:
-          GH_APP_TOKEN: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token }}
+          GH_APP_TOKEN: ${{ steps.app-token.outputs.token || steps.app-token-fallback.outputs.token || github.token }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/github/real-behavior-proof-check.mjs
