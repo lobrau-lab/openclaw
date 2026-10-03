@@ -71,7 +71,6 @@ jobs:
       - name: Create organization membership token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        continue-on-error: true
         with:
           client-id: "2729701"
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY || 'empty' }}
@@ -82,7 +81,6 @@ jobs:
         if: steps.app-token.outcome == 'failure'
         continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        continue-on-error: true
         with:
           client-id: "2971289"
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK || 'empty' }}
@@ -104,7 +102,6 @@ jobs:
         id: publish-app-token
         if: success() && steps.proof.outcome == 'success'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        continue-on-error: true
         with:
           client-id: "2729701"
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY || 'empty' }}
@@ -115,7 +112,6 @@ jobs:
         if: success() && steps.proof.outcome == 'success' && steps.publish-app-token.outcome == 'failure'
         continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        continue-on-error: true
         with:
           client-id: "2971289"
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY_FALLBACK || 'empty' }}
