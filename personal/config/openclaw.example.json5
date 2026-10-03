@@ -1,0 +1,50 @@
+/**
+ * STRICTLY VALIDATED CONFIGURATION
+ * Path: ~/.openclaw/openclaw.json
+ *
+ * Rules:
+ * - This file must be valid JSON5.
+ * - MLX is the only active provider. No active cloud providers.
+ * - Hardening notes:
+ *   - The MLX server should be running as a background service/daemon.
+ *   - On Mac M-series, use `sysctl iogpu.wired_limit_mb` for 24/7 RAM residency tuning (even though this specific setup is running on a VM).
+ *   - Ensure models fit entirely in memory to prevent swapping.
+ */
+{
+  "mcp": {
+    "servers": {}
+  },
+  "providers": {
+    "mlx": {
+      // Assuming a generic MLX-compatible server at localhost
+      "apiBase": "http://127.0.0.1:8080/v1",
+      "apiKey": "mlx-local",
+      "active": true
+    },
+    // Example only - inactive cloud provider
+    "deepseek": {
+      "apiBase": "https://api.deepseek.com/v1",
+      "apiKey": "sk-...",
+      "active": false
+    }
+  },
+  "model": {
+    "default": "mlx",
+    // MLX models can have up to 128k context depending on the model, hardcoding a safe default
+    "contextWindow": 16384
+  },
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "mode": "main",
+        // Deny groups for untrusted input agents as per Step 5
+        "deny": ["fs", "runtime", "web", "browser", "cron", "gateway", "node"]
+      }
+    }
+  },
+  "tools": {
+    "exec": {
+      "safeBins": ["echo", "cat", "ls", "grep"]
+    }
+  }
+}
