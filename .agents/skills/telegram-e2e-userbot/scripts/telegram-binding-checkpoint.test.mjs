@@ -1,66 +1,14 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { useAutoCleanupTempDirTracker } from "../../../../test/helpers/temp-dir.ts";
+import { run, stopChildren } from "./node-test-children.mjs";
 
 // Leave time inside the harness's 120 s budget for after hooks to join children.
 const TEST_TIMEOUT_MS = 90_000;
-
-function run(context, children, command, args, options) {
-  context.signal.throwIfAborted();
-  const child = spawn(command, args, {
-    ...options,
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8").on("data", (chunk) => {
-    stdout += chunk;
-  });
-  child.stderr.setEncoding("utf8").on("data", (chunk) => {
-    stderr += chunk;
-  });
-  const closed = new Promise((resolve) => {
-    child.once("close", (status, signal) => resolve({ status, signal, stdout, stderr }));
-  });
-  children.add({ child, closed });
-  return new Promise((resolve, reject) => {
-    const abort = () => {
-      const error = new Error(
-        `Child did not finish before the test ended:\n${stderr.slice(-4000)}`,
-        {
-          cause: context.signal.reason,
-        },
-      );
-      context.diagnostic(error.message);
-      reject(error);
-    };
-    context.signal.addEventListener("abort", abort, { once: true });
-    child.once("error", reject);
-    closed.then(resolve).finally(() => context.signal.removeEventListener("abort", abort));
-  });
-}
-
-// A descendant can hold the pipes after its parent exits, so always kill the group.
-async function stopChildren(children) {
-  for (const { child } of children) {
-    if (child.pid) {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH" && error.code !== "EPERM") {
-          throw error;
-        }
-      }
-    }
-  }
-  await Promise.all([...children].map(({ closed }) => closed));
-}
 
 // The 90 s / 60 s budgets bound live runs and are not under test here.
 const frozenClock = "data:text/javascript,const t=performance.now();performance.now=()=>t;";
@@ -71,6 +19,7 @@ const chatId = "-1001234567890";
 const topicId = 42;
 const parentKey = `agent:main:telegram:group:${chatId}:topic:${topicId}`;
 const childKey = "agent:main:subagent:worker";
+const writeJson = (file, value) => fs.writeFileSync(file, JSON.stringify(value));
 const toolCallId = "call_mock_sessions_spawn_0123456789|fc_fixture";
 const baselineCommit = "a".repeat(40);
 const candidateCommit = "b".repeat(40);
@@ -163,27 +112,20 @@ function createRun(context) {
     "export const redactSensitiveText = (value) => value;\n",
   );
   const buildInfo = (commit) => ({ buildId: "fixture-build", commit });
-  fs.writeFileSync(path.join(packageRoot, "dist/build-info.json"), JSON.stringify(buildInfo()));
+  writeJson(path.join(packageRoot, "dist/build-info.json"), buildInfo());
   const runtimeHashes = {
     "dist/entry.js": createHash("sha256").update(fakeEntry).digest("hex"),
   };
-  fs.writeFileSync(
-    path.join(proof, "upgrade-input.json"),
-    JSON.stringify({
-      packageRoot,
-      baseline: { buildInfo: buildInfo(baselineCommit), runtimeHashes },
-      candidate: { buildInfo: buildInfo(candidateCommit), runtimeHashes },
-    }),
-  );
+  writeJson(path.join(proof, "upgrade-input.json"), {
+    packageRoot,
+    baseline: { buildInfo: buildInfo(baselineCommit), runtimeHashes },
+    candidate: { buildInfo: buildInfo(candidateCommit), runtimeHashes },
+  });
   const eventsPath = path.join(proof, "events.ndjson");
-  fs.writeFileSync(
-    path.join(proof, "fixture.json"),
-    JSON.stringify({ runId, chatId, topicId, eventsPath }),
-  );
-  fs.writeFileSync(
-    path.join(owned, "config.json"),
-    JSON.stringify({ gateway: { port: 18789, bind: "loopback", auth: { mode: "none" } } }),
-  );
+  writeJson(path.join(proof, "fixture.json"), { runId, chatId, topicId, eventsPath });
+  writeJson(path.join(owned, "config.json"), {
+    gateway: { port: 18789, bind: "loopback", auth: { mode: "none" } },
+  });
   let elapsedMs = 0;
   const events = [];
   const transcriptsPath = path.join(owned, "transcripts.json");
@@ -212,14 +154,11 @@ function createRun(context) {
       fs.writeFileSync(eventsPath, events.map((event) => JSON.stringify(event) + "\n").join(""));
     },
     async checkpoint(phase, transcripts) {
-      fs.writeFileSync(transcriptsPath, JSON.stringify(transcripts));
-      fs.writeFileSync(
-        path.join(proof, "installed-runtime.json"),
-        JSON.stringify({
-          packageRoot: fs.realpathSync(packageRoot),
-          build: buildInfo(phase === "spawn" ? baselineCommit : candidateCommit),
-        }),
-      );
+      writeJson(transcriptsPath, transcripts);
+      writeJson(path.join(proof, "installed-runtime.json"), {
+        packageRoot: fs.realpathSync(packageRoot),
+        build: buildInfo(phase === "spawn" ? baselineCommit : candidateCommit),
+      });
       const output = path.join(proof, `routing-${phase}.json`);
       const previous = { before: "spawn", after: "before" }[phase];
       const child = await run(
@@ -257,72 +196,60 @@ function createRun(context) {
   };
 }
 
+async function startRun(context) {
+  const fixture = createRun(context);
+  const transcripts = spawnTranscripts();
+  fixture.observe("SPAWN", ["PARENT", "CHILD"]);
+  const spawned = await fixture.checkpoint("spawn", transcripts);
+  assert.equal(spawned.exitCode, 0, JSON.stringify(spawned.diagnostic));
+  assert.equal(spawned.checkpoint.phases.CHILD.session, "child");
+  return { fixture, transcripts };
+}
+
 describe("Telegram binding checkpoints", { concurrency: true }, () => {
   test(
-    "candidate checkpoints require follow-ups in the parent topic session after a legacy takeover",
+    "candidate follow-ups return to the parent across restart",
     { timeout: TEST_TIMEOUT_MS },
     async (context) => {
-      const fixture = createRun(context);
-      const transcripts = spawnTranscripts();
-      fixture.observe("SPAWN", ["PARENT", "CHILD"]);
-      const spawned = await fixture.checkpoint("spawn", transcripts);
-      assert.equal(spawned.exitCode, 0, JSON.stringify(spawned.diagnostic));
-      assert.equal(spawned.checkpoint.phases.CHILD.session, "child");
-
-      fixture.observe("BEFORE", ["BEFORE"]);
-      transcripts.parent.push(...turn("BEFORE"));
-      const before = await fixture.checkpoint("before", transcripts);
-      assert.equal(before.exitCode, 0, JSON.stringify(before.diagnostic));
-      assert.equal(before.checkpoint.childKey, childKey);
-      assert.equal(before.checkpoint.phases.CHILD.session, "child");
-      assert.equal(before.checkpoint.phases.BEFORE.session, "parent");
-
-      fixture.observe("AFTER", ["AFTER"]);
-      transcripts.parent.push(...turn("AFTER"));
-      const after = await fixture.checkpoint("after", transcripts);
-      assert.equal(after.exitCode, 0, JSON.stringify(after.diagnostic));
+      const { fixture, transcripts } = await startRun(context);
+      let result;
+      for (const phase of ["before", "after"]) {
+        const marker = phase.toUpperCase();
+        fixture.observe(marker, [marker]);
+        transcripts.parent.push(...turn(marker));
+        result = await fixture.checkpoint(phase, transcripts);
+        assert.equal(result.exitCode, 0, JSON.stringify(result.diagnostic));
+      }
+      assert.equal(result.checkpoint.childKey, childKey);
       assert.deepEqual(
         Object.fromEntries(
-          Object.entries(after.checkpoint.phases).map(([name, fact]) => [name, fact.session]),
+          Object.entries(result.checkpoint.phases).map(([name, fact]) => [name, fact.session]),
         ),
         { CHILD: "child", BEFORE: "parent", AFTER: "parent" },
       );
     },
   );
 
-  test(
-    "candidate checkpoints reject a follow-up still routed to the legacy spawned child",
-    { timeout: TEST_TIMEOUT_MS },
-    async (context) => {
-      const fixture = createRun(context);
-      const transcripts = spawnTranscripts();
-      fixture.observe("SPAWN", ["PARENT", "CHILD"]);
-      assert.equal((await fixture.checkpoint("spawn", transcripts)).exitCode, 0);
-
+  for (const [code, change] of [
+    ["FOLLOWUP_ROUTED_TO_CHILD", (transcripts) => transcripts.child.push(...turn("BEFORE"))],
+    [
+      "PRIOR_CHILD_PHASE_DISAPPEARED",
+      (transcripts) => {
+        transcripts.parent.push(...turn("BEFORE"));
+        transcripts.child = [];
+      },
+    ],
+  ]) {
+    test(`candidate checkpoint rejects ${code}`, { timeout: TEST_TIMEOUT_MS }, async (context) => {
+      const { fixture, transcripts } = await startRun(context);
       fixture.observe("BEFORE", ["BEFORE"]);
-      transcripts.child.push(...turn("BEFORE"));
+      change(transcripts);
       const before = await fixture.checkpoint("before", transcripts);
       assert.equal(before.exitCode, 1);
-      assert.equal(before.diagnostic.code, "FOLLOWUP_ROUTED_TO_CHILD");
-      assert.equal(before.diagnostic.earlyPhase, "BEFORE");
-    },
-  );
-
-  test(
-    "candidate checkpoints reject a removed spawn-phase child transcript",
-    { timeout: TEST_TIMEOUT_MS },
-    async (context) => {
-      const fixture = createRun(context);
-      const transcripts = spawnTranscripts();
-      fixture.observe("SPAWN", ["PARENT", "CHILD"]);
-      assert.equal((await fixture.checkpoint("spawn", transcripts)).exitCode, 0);
-
-      fixture.observe("BEFORE", ["BEFORE"]);
-      transcripts.parent.push(...turn("BEFORE"));
-      transcripts.child = [];
-      const before = await fixture.checkpoint("before", transcripts);
-      assert.equal(before.exitCode, 1);
-      assert.equal(before.diagnostic.code, "PRIOR_CHILD_PHASE_DISAPPEARED");
-    },
-  );
+      assert.equal(before.diagnostic.code, code);
+      if (code === "FOLLOWUP_ROUTED_TO_CHILD") {
+        assert.equal(before.diagnostic.earlyPhase, "BEFORE");
+      }
+    });
+  }
 });
